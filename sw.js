@@ -11,15 +11,18 @@ async function showPush(data) {
   }
   if (!note?.title || typeof note.body !== 'string') {
     note = {
-      title: 'Brasserie de l’Herbasse · Menu du jour',
+      title: 'Menu du jour',
       body: 'Consultez le menu de la brasserie.',
       tag: 'menu-du-jour',
     };
     try {
       const response = await fetch('/api/menu', { cache: 'no-store' });
       const menu = await response.json();
-      if (menu?.main) {
-        note.body = [menu.main + ' · ' + menu.price + ' €', menu.starter, menu.sweet].filter(Boolean).join('\n');
+      if (menu?.notification) {
+        note = menu.notification;
+      } else if (menu?.main) {
+        note.title = 'Menu du jour · ' + menu.price + ' €';
+        note.body = [menu.starter, menu.main, menu.sweet].filter(Boolean).join(' · ');
         note.tag = 'menu-du-jour-' + menu.day;
         note.image = menu.photoPath;
       }
@@ -28,7 +31,8 @@ async function showPush(data) {
     }
   }
 
-  const options = { body: note.body, icon: '/logo.webp', tag: note.tag || note.id };
+  const options = { body: note.body, tag: note.tag || note.id };
+  if (!note.tag?.startsWith('menu-du-jour')) options.icon = '/logo.webp';
   if (note.tag) options.renotify = true;
   if (typeof note.image === 'string' && /^\/photo-du-jour\/\d{4}-\d{2}-\d{2}\?v=[a-z0-9-]+$/.test(note.image)) {
     options.image = new URL(note.image, self.location.origin).href;

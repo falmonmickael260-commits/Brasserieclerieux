@@ -7,6 +7,25 @@ const menuFields='day,starter,main,sweet,price,state,photo IS NOT NULL AS hasPho
 const publishedMenu=(env,date)=>env.DB.prepare("SELECT "+menuFields+" FROM menus WHERE day=? AND state='published'").bind(date).first();
 const todayMenu=env=>publishedMenu(env,day());
 const photoPath=menu=>'/photo-du-jour/'+menu.day+'?v='+encodeURIComponent(menu.notificationKey);
+function shortDish(value){
+  const dish=value?.trim().replace(/\s+/g,' ')??'';
+  const name=dish.split(/[,;]|\s[–—]\s/,1)[0].trim()||dish;
+  const letters=Array.from(name);
+  if(letters.length<=22)return name;
+  const clipped=letters.slice(0,21).join('');
+  const words=clipped.replace(/\s+\S*$/,'');
+  return (words.length>=11?words:clipped.trimEnd())+'…';
+}
+function menuNotification(menu){
+  const dishes=[menu.starter,menu.main,menu.sweet].map(shortDish).filter(Boolean);
+  return {
+    id:menu.notificationKey,
+    tag:'menu-du-jour-'+menu.day,
+    title:'Menu du jour · '+String(menu.price).replace('.',',')+' €',
+    body:dishes.join(' · '),
+    ...(menu.hasPhoto?{image:photoPath(menu)}:{}),
+  };
+}
 const title=(label,heading)=>'<small>'+label+'</small><h1>'+heading+'</h1>';
 async function page(path,env,admin){
 let body='';
@@ -100,9 +119,7 @@ try{
   console.error('Menu push signing key is unavailable');
   return result;
 }
-const note={id:keyId,tag:'menu-du-jour-'+menu.day,title:'Brasserie de l’Herbasse · Menu du jour',
-  body:[menu.main+' · '+menu.price+' €',menu.starter,menu.sweet].filter(Boolean).join('\n')};
-if(menu.hasPhoto)note.image=photoPath(menu);
+const note=menuNotification(menu);
 for(const sub of pending){
   const claim=await env.DB.prepare(
     "INSERT OR IGNORE INTO deliveries SELECT ?,? FROM menus WHERE day=? AND state='published' AND COALESCE(notification_key,day)=?"
@@ -203,7 +220,13 @@ return row?.photo?send(Uint8Array.from(atob(row.photo),c=>c.charCodeAt(0)),'imag
 if(p==='/logo.webp')return send(Uint8Array.from(atob(LOGO),c=>c.charCodeAt(0)),'image/webp');
 if(p==='/style.css')return send(CSS,'text/css');if(p==='/client.js'||p==='/sw.js')return send(p==='/sw.js'?SW:CLIENT,'text/javascript');
 if(p==='/manifest.json')return json({name,short_name:'Herbasse',id:'/',start_url:'/',display:'standalone',theme_color:'#151515',icons:[192,512].map(n=>({src:'/icon'+n+'.png',sizes:n+'x'+n,type:'image/png'}))});
-if(p==='/api/menu'){const menu=await todayMenu(env);return json(menu?{...menu,photoPath:menu.hasPhoto?photoPath(menu):null}:null)}if(p==='/api/key')return json(env.VAPID_PUBLIC);
+if(p==='/api/menu'){
+  const menu=await todayMenu(env);
+  if(!menu)return json(null);
+  const notification=menuNotification(menu);
+  return json({...menu,photoPath:notification.image??null,notification});
+}
+if(p==='/api/key')return json(env.VAPID_PUBLIC);
 if(method==='POST'&&req.headers.get('origin')!==u.origin&&p!=='/api/tick')return json('Origine refusée',403);
 if(method==='POST'&&p==='/api/tick')return json(await tick(env));
 const token=env.ADMIN_SECRET?await session(env,day()):null;const admin=!!token&&(req.headers.get('cookie')||'').split(';').some(v=>v.trim()==='brasserie='+token);
