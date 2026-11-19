@@ -31,7 +31,17 @@ async function session(env,date){return b64(await crypto.subtle.digest('SHA-256'
 const json=(v,status=200)=>Response.json(v,{status,headers:{'Cache-Control':'no-store'}});
 function validEndpoint(s){try{const u=new URL(s);return u.protocol==='https:'&&!u.port&&!u.username&&!u.password&&(u.hostname==='fcm.googleapis.com'||u.hostname.endsWith('.push.apple.com')||u.hostname==='web.push.apple.com'||u.hostname.endsWith('.push.services.mozilla.com')||u.hostname.endsWith('.notify.windows.com'))}catch{return false}}
 async function sendPush(env,key,endpoint,payload){
-const unsigned=b64(enc.encode('{"typ":"JWT","alg":"ES256"}'))+'.'+b64(enc.encode(JSON.stringify({aud:new URL(endpoint).origin,exp:Math.floor(Date.now()/1000)+3600,sub:'mailto:brasseriedelherbasse@hotmail.com'})));const token=unsigned+'.'+b64(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,enc.encode(unsigned)));return fetch(endpoint,{method:'POST',redirect:'error',body:payload,headers:{...(payload?{'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream'}:{}),TTL:'3600',Authorization:'vapid t='+token+', k='+env.VAPID_PUBLIC}});
+const unsigned=b64(enc.encode('{"typ":"JWT","alg":"ES256"}'))+'.'+b64(enc.encode(JSON.stringify({
+  aud:new URL(endpoint).origin,exp:Math.floor(Date.now()/1000)+3600,sub:'mailto:brasseriedelherbasse@hotmail.com'
+})));
+const token=unsigned+'.'+b64(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,enc.encode(unsigned)));
+return fetch(endpoint,{
+  method:'POST',redirect:'error',body:payload,
+  headers:{
+    ...(payload?{'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream'}:{}),
+    TTL:'3600',Urgency:'high',Authorization:'vapid t='+token+', k='+env.VAPID_PUBLIC
+  }
+});
 }
 const decode64=value=>Uint8Array.from(atob(value.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));
 function joinBytes(...arrays){const size=arrays.reduce((n,a)=>n+a.length,0),out=new Uint8Array(size);let pos=0;for(const a of arrays){out.set(a,pos);pos+=a.length}return out}
