@@ -22,7 +22,8 @@ async function showPush(data) {
         note = menu.notification;
       } else if (menu?.main) {
         note.title = 'Menu du jour · ' + menu.price + ' €';
-        note.body = [menu.starter, menu.main, menu.sweet].filter(Boolean).join(' · ');
+        note.body = [['Entrée', menu.starter], ['Plat', menu.main], ['Dessert', menu.sweet]]
+          .filter(([, dish]) => dish).map(([label, dish]) => label + ' · ' + dish).join('\n');
         note.tag = 'menu-du-jour-' + menu.day;
         note.image = menu.photoPath;
       }

@@ -17,12 +17,15 @@ function shortDish(value){
   return (words.length>=11?words:clipped.trimEnd())+'…';
 }
 function menuNotification(menu){
-  const dishes=[menu.starter,menu.main,menu.sweet].map(shortDish).filter(Boolean);
+  const dishes=[['Entrée',menu.starter],['Plat',menu.main],['Dessert',menu.sweet]]
+    .map(([label,dish])=>[label,shortDish(dish)])
+    .filter(([,dish])=>dish)
+    .map(([label,dish])=>label+' · '+dish);
   return {
     id:menu.notificationKey,
     tag:'menu-du-jour-'+menu.day,
     title:'Menu du jour · '+String(menu.price).replace('.',',')+' €',
-    body:dishes.join(' · '),
+    body:dishes.join('\n'),
     ...(menu.hasPhoto?{image:photoPath(menu)}:{}),
   };
 }
@@ -213,9 +216,17 @@ export default {async scheduled(_,env){await tick(env)},async fetch(req,env){con
 if(p.startsWith('/photos/') && Object.hasOwn(PHOTOS,p.slice(8)))return send(Uint8Array.from(atob(PHOTOS[p.slice(8)]),c=>c.charCodeAt(0)),'image/jpeg');
 if(p==='/icon192.png'||p==='/icon512.png')return send(Uint8Array.from(atob(ICONS[p.slice(1)]),c=>c.charCodeAt(0)),'image/png');
 if(/^\/photo-du-jour\/\d{4}-\d{2}-\d{2}$/.test(p)){
-const version=u.searchParams.get('v');
-const row=await env.DB.prepare("SELECT photo FROM menus WHERE day=? AND state='published' AND (? IS NULL OR COALESCE(notification_key,day)=?)").bind(p.split('/').pop(),version,version).first();
-return row?.photo?send(Uint8Array.from(atob(row.photo),c=>c.charCodeAt(0)),'image/jpeg'):new Response('',{status:404})
+  const date=p.split('/').pop(),version=u.searchParams.get('v');
+  const row=await env.DB.prepare(`
+    SELECT photo FROM menus WHERE day=? AND state='published'
+      AND (? IS NULL OR COALESCE(notification_key,day)=?)
+    UNION ALL
+    SELECT previous.photo FROM menu_notification_photos previous
+      JOIN menus ON menus.day=previous.day AND menus.state='published'
+      WHERE previous.day=? AND previous.notification_key=?
+    LIMIT 1
+  `).bind(date,version,version,date,version).first();
+  return row?.photo?send(Uint8Array.from(atob(row.photo),c=>c.charCodeAt(0)),'image/jpeg'):new Response('',{status:404});
 }
 if(p==='/logo.webp')return send(Uint8Array.from(atob(LOGO),c=>c.charCodeAt(0)),'image/webp');
 if(p==='/style.css')return send(CSS,'text/css');if(p==='/client.js'||p==='/sw.js')return send(p==='/sw.js'?SW:CLIENT,'text/javascript');

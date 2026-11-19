@@ -85,58 +85,99 @@ if(menuForm){
   finally{actions.forEach(button=>{button.disabled=false})}
  };
 }
-if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+const registeredWorker='serviceWorker' in navigator?navigator.serviceWorker.register('/sw.js'):null;
+registeredWorker?.catch(()=>{});
 if($('#push')){
- const button=$('#push'),test=$('#test-push');
- if(!('PushManager' in window)){
+ const button=$('#push'),test=$('#test-push'),guide=$('#guide');
+ const android=/Android/i.test(navigator.userAgent);
+ const installed=matchMedia('(display-mode: standalone)').matches;
+ const androidHelp=installed
+  ? 'Dans les paramètres du Samsung, ouvrez Applications → Herbasse → Notifications et autorisez-les. Vous pouvez aussi ouvrir cette page directement dans Chrome.'
+  : 'Dans Chrome, ouvrez les autorisations du site et sélectionnez Notifications → Autoriser. Vérifiez aussi que Chrome est autorisé à notifier dans les paramètres du Samsung.';
+ const permissionHelp=android?androidHelp:'Autorisez les notifications de Herbasse dans les réglages de votre appareil, puis rechargez cette page.';
+ test.hidden=false;
+ test.disabled=true;
+ test.setAttribute('aria-describedby','guide');
+ guide.textContent='Touchez « Activer les notifications », puis « Autoriser » pour pouvoir tester sur cet appareil.';
+
+ if(!registeredWorker||!('PushManager' in window)||!('Notification' in window)){
   button.disabled=true;
-  $('#guide').textContent='Sur iPhone, ajoutez d’abord la Brasserie à votre écran d’accueil, puis ouvrez son icône pour activer les notifications.';
+  guide.textContent=android
+   ? 'Ouvrez cette page directement dans Chrome pour activer les notifications.'
+   : 'Sur iPhone, ajoutez d’abord la Brasserie à votre écran d’accueil, puis ouvrez son icône pour activer les notifications.';
  }else{
-  function showActive(active){
-   button.textContent=active?'Désactiver les notifications':'Activer les notifications';
-   test.hidden=!active;
+  let active=false;
+  function showActive(enabled){
+   active=enabled;
+   button.textContent=enabled?'Désactiver les notifications':'Activer les notifications';
+   test.disabled=!enabled;
+   guide.textContent=enabled?'':'Touchez « Activer les notifications », puis « Autoriser » pour pouvoir tester sur cet appareil.';
   }
-  const ready=navigator.serviceWorker.ready;
-  ready.then(async registration=>{
-   const existing=await registration.pushManager.getSubscription();
-   if(existing){
-    showActive(true);
-    await api('sub',existing.toJSON());
-   }
-  }).catch(x=>msg(x.message));
+  async function waitForPushWorker(){
+   let timeout;
+   try{
+    return await Promise.race([
+     registeredWorker.then(()=>navigator.serviceWorker.ready),
+     new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Le service de notifications ne démarre pas. Rechargez cette page.')),8000)}),
+    ]);
+   }finally{clearTimeout(timeout)}
+  }
+  function activationError(error){
+   const unsupported=error.name==='NotSupportedError'||error.name==='AbortError'
+    ||error.message==='Service de notification non pris en charge.';
+   msg(android&&unsupported?'Impossible d’activer depuis cet écran. Ouvrez la page directement dans Chrome et réessayez.':error.message);
+  }
+
+  if(Notification.permission==='denied')guide.textContent=permissionHelp;
+  if(Notification.permission==='granted'){
+   button.disabled=true;
+   waitForPushWorker().then(async registration=>{
+    const subscription=await registration.pushManager.getSubscription();
+    if(subscription){
+     await api('sub',subscription.toJSON());
+     showActive(true);
+    }
+   }).catch(activationError).finally(()=>{button.disabled=false});
+  }
   button.onclick=async()=>{
    button.disabled=true;
    try{
-    const permission=await Notification.requestPermission();
-    if(permission!=='granted')throw Error('Autorisez les notifications de Herbasse dans les réglages de votre appareil.');
-    const registration=await ready;
+    if(!active&&await Notification.requestPermission()!=='granted')throw Error(permissionHelp);
+    const registration=await waitForPushWorker();
     const existing=await registration.pushManager.getSubscription();
-    if(existing){
+    if(active&&existing){
      await api('sub',{endpoint:existing.endpoint,remove:true});
      await existing.unsubscribe();
      showActive(false);
      msg('Notifications désactivées sur cet appareil.');
     }else{
-     const key=await api('key');
-     const applicationServerKey=Uint8Array.from(atob(key.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));
-     const subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey});
-     try{await api('sub',subscription.toJSON())}catch(error){await subscription.unsubscribe();throw error}
+     let subscription=existing;
+     if(!subscription){
+      const key=await api('key');
+      const applicationServerKey=Uint8Array.from(atob(key.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));
+      subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey});
+     }
+     try{await api('sub',subscription.toJSON())}
+     catch(error){if(!existing)await subscription.unsubscribe();throw error}
      showActive(true);
      msg('Notifications activées sur cet appareil.');
     }
-   }catch(x){msg(x.message)}
+   }catch(error){activationError(error)}
    finally{button.disabled=false}
   };
   test.onclick=async()=>{
    test.disabled=true;
    try{
-    const subscription=await (await ready).pushManager.getSubscription();
-    if(!subscription)throw Error('Activez les notifications sur cet appareil.');
+    const subscription=await (await waitForPushWorker()).pushManager.getSubscription();
+    if(!subscription){
+     showActive(false);
+     throw Error('Activez les notifications sur cet appareil.');
+    }
     await api('sub',subscription.toJSON());
     await api('test-push',subscription.toJSON());
     msg('Test envoyé à cet appareil. Vérifiez le centre de notifications.');
-   }catch(x){msg(x.message)}
-   finally{test.disabled=false}
+   }catch(error){msg(error.message)}
+   finally{test.disabled=!active}
   };
  }
 }
