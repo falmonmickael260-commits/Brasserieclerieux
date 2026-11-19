@@ -89,8 +89,35 @@ const registeredWorker='serviceWorker' in navigator?navigator.serviceWorker.regi
 registeredWorker?.catch(()=>{});
 if($('#push')){
  const button=$('#push'),test=$('#test-push'),guide=$('#guide');
+ const chromeHelp=$('#push-chrome-help');
  const android=/Android/i.test(navigator.userAgent);
  const installed=matchMedia('(display-mode: standalone)').matches;
+ const chrome=/Chrome\//i.test(navigator.userAgent)
+  && !/SamsungBrowser\/|\bGSA\/|; wv\)|EdgA\/|OPR\//i.test(navigator.userAgent);
+ const manualChrome=new URLSearchParams(location.search).has('chrome-manuel');
+ function offerChrome(){
+  if(android&&(manualChrome||installed||!chrome))chromeHelp.hidden=false;
+ }
+ if(android){
+  const alerts=new URL('/alertes',location.origin);
+  const fallback=new URL(alerts);
+  fallback.searchParams.set('chrome-manuel','1');
+  $('#open-push-chrome').href='intent://'+alerts.host+alerts.pathname
+   +'#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url='+encodeURIComponent(fallback.href)+';end';
+  $('#copy-push-link').onclick=async()=>{
+   try{
+    await navigator.clipboard.writeText(alerts.href);
+    msg('Lien copié. Collez-le dans la barre d’adresse de Chrome.');
+   }catch{
+    const link=$('#push-link-to-copy');
+    link.value=alerts.href;
+    link.hidden=false;
+    link.focus();
+    link.select();
+   }
+  };
+  if(manualChrome||!chrome)offerChrome();
+ }
  const androidHelp=installed
   ? 'Dans les paramètres du Samsung, ouvrez Applications → Herbasse → Notifications et autorisez-les. Vous pouvez aussi ouvrir cette page directement dans Chrome.'
   : 'Dans Chrome, ouvrez les autorisations du site et sélectionnez Notifications → Autoriser. Vérifiez aussi que Chrome est autorisé à notifier dans les paramètres du Samsung.';
@@ -102,6 +129,7 @@ if($('#push')){
 
  if(!registeredWorker||!('PushManager' in window)||!('Notification' in window)){
   button.disabled=true;
+  offerChrome();
   guide.textContent=android
    ? 'Ouvrez cette page directement dans Chrome pour activer les notifications.'
    : 'Sur iPhone, ajoutez d’abord la Brasserie à votre écran d’accueil, puis ouvrez son icône pour activer les notifications.';
@@ -112,6 +140,7 @@ if($('#push')){
    button.textContent=enabled?'Désactiver les notifications':'Activer les notifications';
    test.disabled=!enabled;
    guide.textContent=enabled?'':'Touchez « Activer les notifications », puis « Autoriser » pour pouvoir tester sur cet appareil.';
+   if(enabled)chromeHelp.hidden=true;
   }
   async function waitForPushWorker(){
    let timeout;
@@ -123,12 +152,16 @@ if($('#push')){
    }finally{clearTimeout(timeout)}
   }
   function activationError(error){
+   offerChrome();
    const unsupported=error.name==='NotSupportedError'||error.name==='AbortError'
     ||error.message==='Service de notification non pris en charge.';
    msg(android&&unsupported?'Impossible d’activer depuis cet écran. Ouvrez la page directement dans Chrome et réessayez.':error.message);
   }
 
-  if(Notification.permission==='denied')guide.textContent=permissionHelp;
+  if(Notification.permission==='denied'){
+   guide.textContent=permissionHelp;
+   offerChrome();
+  }
   if(Notification.permission==='granted'){
    button.disabled=true;
    waitForPushWorker().then(async registration=>{
