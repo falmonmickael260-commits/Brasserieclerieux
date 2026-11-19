@@ -15,7 +15,12 @@ if(path==='/admin')body=title('Espace du restaurateur','Le <i>panneau admin.</i>
 if(path!=='/admin'){
 const m=await todayMenu(env);
 const date=new Intl.DateTimeFormat('fr-FR',{dateStyle:'full',timeZone:'Europe/Paris'}).format(new Date());
-body=`<main class="daily"><header class="identity"><img src="/logo.webp" alt="La Brasserie de l’Herbasse"><div>La Brasserie <i>de l’Herbasse</i></div><small>Clérieux · Drôme</small></header><div class="folio opening"><div class="binding" aria-hidden="true"><div class="coverleaf left"><div class="leather"><img src="/logo.webp" alt=""></div></div><div class="coverleaf right"><div class="leather"><img src="/logo.webp" alt=""></div></div></div><div class="spread"><section class="dailytext"><small>${esc(date)}</small><h1>Menu <em>du jour</em></h1>${m?'<strong>'+esc(m.price)+' €</strong>'+[['Entrée',m.starter],['Plat',m.main],['Dessert',m.sweet]].filter(([,v])=>v).map(([k,v])=>'<div class="course"><small>'+k+'</small><h2>'+esc(v)+'</h2></div>').join(''):'<p>Le menu du jour n’a pas encore été annoncé. Retrouvez ici l’entrée, le plat et le dessert dès leur publication.</p>'}</section><figure class="dailyphoto"><img src="${m?.hasPhoto?photoPath(m):'/photos/brandade-editorial.jpg'}" alt="${m?.hasPhoto?'Photo du menu du jour':'Illustration de brandade de morue'}"><figcaption>${m?.hasPhoto?'À la table de la brasserie':'Brandade de morue · Illustration'}</figcaption></figure></div></div><button hidden class="reopen" type="button">↻ Revoir l’ouverture</button><details id="mobile"><summary>Recevoir le menu sur mon téléphone</summary><p id="guide"></p><button id="install" hidden>Installer l’application</button> <button id="push">Activer les notifications</button> <button id="test-push" type="button" hidden>Tester sur cet appareil</button><p id="message" role="status"></p></details><dialog id="installbox" aria-labelledby="install-title">
+body=`<main class="daily"><header class="identity"><img src="/logo.webp" alt="La Brasserie de l’Herbasse"><div>La Brasserie <i>de l’Herbasse</i></div><small>Clérieux · Drôme</small></header><div class="folio opening"><div class="binding" aria-hidden="true"><div class="coverleaf left"><div class="leather"><img src="/logo.webp" alt=""></div></div><div class="coverleaf right"><div class="leather"><img src="/logo.webp" alt=""></div></div></div><div class="spread"><section class="dailytext"><small>${esc(date)}</small><h1>Menu <em>du jour</em></h1>${m?'<strong>'+esc(m.price)+' €</strong>'+[['Entrée',m.starter],['Plat',m.main],['Dessert',m.sweet]].filter(([,v])=>v).map(([k,v])=>'<div class="course"><small>'+k+'</small><h2>'+esc(v)+'</h2></div>').join(''):'<p>Le menu du jour n’a pas encore été annoncé. Retrouvez ici l’entrée, le plat et le dessert dès leur publication.</p>'}</section><figure class="dailyphoto"><img src="${m?.hasPhoto?photoPath(m):'/photos/brandade-editorial.jpg'}" alt="${m?.hasPhoto?'Photo du menu du jour':'Illustration de brandade de morue'}"><figcaption>${m?.hasPhoto?'À la table de la brasserie':'Brandade de morue · Illustration'}</figcaption></figure></div></div><div class="opening-controls">
+<button hidden class="reopen" type="button">↻ Revoir l’ouverture</button>
+<button hidden class="reopen" id="opening-sound-toggle" type="button" aria-pressed="false"><span aria-hidden="true">♪</span> Son de l’ouverture</button>
+</div>
+<p id="opening-sound-status" role="status" hidden>Le son n’a pas démarré. Touchez « Revoir l’ouverture » pour réessayer.</p>
+<audio id="opening-sound" preload="auto" src="/son-ouverture.mp3?v=2"></audio><details id="mobile"><summary>Recevoir le menu sur mon téléphone</summary><p id="guide"></p><button id="install" hidden>Installer l’application</button> <button id="push">Activer les notifications</button> <button id="test-push" type="button" hidden>Tester sur cet appareil</button><p id="message" role="status"></p></details><dialog id="installbox" aria-labelledby="install-title">
 <header class="install-header">
 <img src="/icon192.png" alt="" width="48" height="48">
 <h2 id="install-title">Installer la Brasserie</h2>
@@ -192,6 +197,29 @@ async function continueMenuDelivery(env,{publicationId,cursor}){
   if(!menu||menu.notificationKey!=='menu-'+publicationId)return menuChanged();
   return json({delivery:await deliver(env,menu,cursor)});
 }
+function openingAudio(request){
+  const file=Uint8Array.from(atob(OPENING_SOUND),value=>value.charCodeAt(0));
+  const headers=new Headers({
+    'Content-Type':'audio/mpeg',
+    'Accept-Ranges':'bytes',
+    'Cache-Control':'public, max-age=3600',
+    'Content-Length':String(file.length),
+  });
+  if(request.method==='HEAD')return new Response(null,{headers});
+
+  const range=/^bytes=(\d*)-(\d*)$/.exec(request.headers.get('Range')??'');
+  if(!range||(!range[1]&&!range[2]))return new Response(file,{headers});
+  const start=range[1]?Number(range[1]):Math.max(0,file.length-Number(range[2]));
+  const end=range[1]&&range[2]?Math.min(Number(range[2]),file.length-1):file.length-1;
+  if(start>end){
+    headers.set('Content-Range','bytes */'+file.length);
+    headers.set('Content-Length','0');
+    return new Response(null,{status:416,headers});
+  }
+  headers.set('Content-Range','bytes '+start+'-'+end+'/'+file.length);
+  headers.set('Content-Length',String(end-start+1));
+  return new Response(file.subarray(start,end+1),{status:206,headers});
+}
 export default {async scheduled(_,env){await tick(env)},async fetch(req,env){const u=new URL(req.url),p=u.pathname,method=req.method;const send=(v,type)=>new Response(v,{headers:{'Content-Type':type,'Cache-Control':'no-store'}});try{
 if(p.startsWith('/photos/') && Object.hasOwn(PHOTOS,p.slice(8)))return send(Uint8Array.from(atob(PHOTOS[p.slice(8)]),c=>c.charCodeAt(0)),'image/jpeg');
 if(p==='/icon192.png'||p==='/icon512.png')return send(Uint8Array.from(atob(ICONS[p.slice(1)]),c=>c.charCodeAt(0)),'image/png');
@@ -200,6 +228,7 @@ const version=u.searchParams.get('v');
 const row=await env.DB.prepare("SELECT photo FROM menus WHERE day=? AND state='published' AND (? IS NULL OR COALESCE(notification_key,day)=?)").bind(p.split('/').pop(),version,version).first();
 return row?.photo?send(Uint8Array.from(atob(row.photo),c=>c.charCodeAt(0)),'image/jpeg'):new Response('',{status:404})
 }
+if(p==='/son-ouverture.mp3'&&(method==='GET'||method==='HEAD'))return openingAudio(req);
 if(p==='/logo.webp')return send(Uint8Array.from(atob(LOGO),c=>c.charCodeAt(0)),'image/webp');
 if(p==='/style.css')return send(CSS,'text/css');if(p==='/client.js'||p==='/sw.js')return send(p==='/sw.js'?SW:CLIENT,'text/javascript');
 if(p==='/manifest.json')return json({name,short_name:'Herbasse',id:'/',start_url:'/',display:'standalone',theme_color:'#151515',icons:[192,512].map(n=>({src:'/icon'+n+'.png',sizes:n+'x'+n,type:'image/png'}))});

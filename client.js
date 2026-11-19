@@ -225,15 +225,54 @@ if($('#mobile')){
 const folio=document.querySelector('.folio');
 if(folio){
  const replay=document.querySelector('.reopen');
+ const soundToggle=document.querySelector('#opening-sound-toggle');
+ const sound=document.querySelector('#opening-sound');
+ const soundStatus=document.querySelector('#opening-sound-status');
  const motion=matchMedia('(prefers-reduced-motion: reduce)');
- function syncMotion(){replay.hidden=motion.matches}
+ const soundAvailable=Boolean(sound.canPlayType('audio/mpeg'));
+ const soundPreference='herbasse-opening-sound';
+ let soundEnabled=false;
+ try{soundEnabled=localStorage.getItem(soundPreference)==='on'}catch{}
+ soundToggle.setAttribute('aria-pressed',String(soundEnabled));
+
+ function syncMotion(){
+  replay.hidden=motion.matches;
+  soundToggle.hidden=motion.matches||!soundAvailable;
+  if(motion.matches){
+   sound.pause();
+   soundStatus.hidden=true;
+  }
+ }
+ function playOpeningSound(userInitiated=false){
+  if(!soundEnabled||!soundAvailable||motion.matches)return;
+  soundStatus.hidden=true;
+  sound.currentTime=0;
+  sound.play().catch(error=>{
+   if(userInitiated&&soundEnabled&&!motion.matches&&error.name!=='AbortError'){
+    soundStatus.hidden=false;
+   }
+  });
+ }
+ function replayOpening(){
+  folio.classList.remove('opening');
+  void folio.offsetWidth;
+  folio.classList.add('opening');
+  playOpeningSound(true);
+ }
+ replay.addEventListener('click',replayOpening);
+ soundToggle.addEventListener('click',()=>{
+  soundEnabled=!soundEnabled;
+  soundToggle.setAttribute('aria-pressed',String(soundEnabled));
+  try{localStorage.setItem(soundPreference,soundEnabled?'on':'off')}catch{}
+  if(soundEnabled)replayOpening();
+  else{
+   sound.pause();
+   soundStatus.hidden=true;
+  }
+ });
  syncMotion();
  motion.addEventListener('change',syncMotion);
- replay.addEventListener('click',()=>{
-   folio.classList.remove('opening');
-   void folio.offsetWidth;
-   folio.classList.add('opening');
- });
+ playOpeningSound();
 }
 const announcementForm=$('#announce');
 if(announcementForm){
