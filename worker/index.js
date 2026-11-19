@@ -3,17 +3,19 @@ const pages={'/':'Accueil','/menu':'Menu du jour','/carte':'La carte','/maison':
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const day=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Paris'}).format(new Date());
 const hour=()=>Number(new Intl.DateTimeFormat('fr',{timeZone:'Europe/Paris',hour:'2-digit',hourCycle:'h23'}).format(new Date()).slice(0,2));
-const todayMenu=env=>env.DB.prepare("SELECT day,starter,main,sweet,price,state,photo IS NOT NULL AS hasPhoto FROM menus WHERE day=? AND state='published'").bind(day()).first();
+const menuFields='day,starter,main,sweet,price,state,photo IS NOT NULL AS hasPhoto,COALESCE(notification_key,day) AS notificationKey';
+const publishedMenu=(env,date)=>env.DB.prepare("SELECT "+menuFields+" FROM menus WHERE day=? AND state='published'").bind(date).first();
+const todayMenu=env=>publishedMenu(env,day());
+const photoPath=menu=>'/photo-du-jour/'+menu.day+'?v='+encodeURIComponent(menu.notificationKey);
 const title=(label,heading)=>'<small>'+label+'</small><h1>'+heading+'</h1>';
-const columns='day,starter,main,sweet,price,state';
 async function page(path,env,admin){
 let body='';
-if(path==='/admin')body=title('Espace du restaurateur','Le <i>panneau admin.</i>')+(admin?'<section class="sheet"><form id="menuform"><label>Photo du jour<input type="file" id="photo" accept="image/*"></label><img hidden id="preview" width="150" alt="Photo sélectionnée"><label>Date du menu<input type="date" name="day" required value="'+day()+'"></label>'+[['starter','Entrée'],['main','Plat'],['sweet','Dessert'],['price','Prix en euros']].map(([k,l])=>'<label>'+l+'<input name="'+k+'" maxlength="150" '+(k==='main'||k==='price'?'required':'')+' value="'+(k==='price'?'19':'')+'"></label>').join('')+'<div class="actions"><button value="scheduled">Programmer pour 10 h</button><button value="draft">Garder en brouillon</button><button value="published">Publier et envoyer maintenant</button></div></form><p id="message" role="status"></p><h2>Notification libre</h2><form id="announce"><label>Titre<input name="title" required maxlength="75"></label><label>Message<textarea name="body" rows="3" required maxlength="240"></textarea></label><button>Envoyer la notification maintenant</button><p role="status" id="announce-status"></p></form><h2>Menus enregistrés</h2><div id="history"></div><p><a href="/alertes">Lien d’activation à partager aux habitués</a></p><button id="logout">Déconnexion</button></section>':'<section class="sheet"><form id="login"><label>Mot de passe du restaurant<input type="password" name="password" autocomplete="current-password" required></label><button>Accéder au panneau</button></form><p id="message" role="status"></p></section>');
+if(path==='/admin')body=title('Espace du restaurateur','Le <i>panneau admin.</i>')+(admin?'<section class="sheet"><form id="menuform"><button id="edit-published" type="button" hidden>Modifier le menu du jour publié</button><label>Photo du jour<input type="file" id="photo" accept="image/*"></label><img hidden id="preview" width="150" alt="Aperçu de la photo du menu"><label>Date du menu<input type="date" name="day" required value="'+day()+'"></label>'+[['starter','Entrée'],['main','Plat'],['sweet','Dessert'],['price','Prix en euros']].map(([k,l])=>'<label>'+l+'<input name="'+k+'" maxlength="150" '+(k==='main'||k==='price'?'required':'')+' value="'+(k==='price'?'19':'')+'"></label>').join('')+'<div class="actions"><button value="scheduled">Programmer pour 10 h</button><button value="draft">Garder en brouillon</button><button id="publish-menu" value="published">Publier et envoyer maintenant</button></div></form><p id="message" role="status"></p><h2>Notification libre</h2><form id="announce"><label>Titre<input name="title" required maxlength="75"></label><label>Message<textarea name="body" rows="3" required maxlength="240"></textarea></label><button>Envoyer la notification maintenant</button><p role="status" id="announce-status"></p></form><h2>Menus enregistrés</h2><div id="history"></div><p><a href="/alertes">Lien d’activation à partager aux habitués</a></p><button id="logout">Déconnexion</button></section>':'<section class="sheet"><form id="login"><label>Mot de passe du restaurant<input type="password" name="password" autocomplete="current-password" required></label><button>Accéder au panneau</button></form><p id="message" role="status"></p></section>');
 
 if(path!=='/admin'){
 const m=await todayMenu(env);
 const date=new Intl.DateTimeFormat('fr-FR',{dateStyle:'full',timeZone:'Europe/Paris'}).format(new Date());
-body=`<main class="daily"><header class="identity"><img src="/logo.webp" alt="La Brasserie de l’Herbasse"><div>La Brasserie <i>de l’Herbasse</i></div><small>Clérieux · Drôme</small></header><div class="folio opening"><div class="binding" aria-hidden="true"><div class="coverleaf left"><div class="leather"><img src="/logo.webp" alt=""></div></div><div class="coverleaf right"><div class="leather"><img src="/logo.webp" alt=""></div></div></div><div class="spread"><section class="dailytext"><small>${esc(date)}</small><h1>Menu <em>du jour</em></h1>${m?'<strong>'+esc(m.price)+' €</strong>'+[['Entrée',m.starter],['Plat',m.main],['Dessert',m.sweet]].filter(([,v])=>v).map(([k,v])=>'<div class="course"><small>'+k+'</small><h2>'+esc(v)+'</h2></div>').join(''):'<p>Le menu du jour n’a pas encore été annoncé. Retrouvez ici l’entrée, le plat et le dessert dès leur publication.</p>'}</section><figure class="dailyphoto"><img src="${m?.hasPhoto?'/photo-du-jour/'+m.day:'/photos/brandade-editorial.jpg'}" alt="${m?.hasPhoto?'Photo du menu du jour':'Illustration de brandade de morue'}"><figcaption>${m?.hasPhoto?'À la table de la brasserie':'Brandade de morue · Illustration'}</figcaption></figure></div></div><button hidden class="reopen" type="button">↻ Revoir l’ouverture</button><details id="mobile"><summary>Recevoir le menu sur mon téléphone</summary><p id="guide"></p><button id="install" hidden>Installer l’application</button> <button id="push">Activer les notifications</button> <button id="test-push" type="button" hidden>Tester sur cet appareil</button><p id="message" role="status"></p></details><dialog id="installbox" aria-labelledby="install-title">
+body=`<main class="daily"><header class="identity"><img src="/logo.webp" alt="La Brasserie de l’Herbasse"><div>La Brasserie <i>de l’Herbasse</i></div><small>Clérieux · Drôme</small></header><div class="folio opening"><div class="binding" aria-hidden="true"><div class="coverleaf left"><div class="leather"><img src="/logo.webp" alt=""></div></div><div class="coverleaf right"><div class="leather"><img src="/logo.webp" alt=""></div></div></div><div class="spread"><section class="dailytext"><small>${esc(date)}</small><h1>Menu <em>du jour</em></h1>${m?'<strong>'+esc(m.price)+' €</strong>'+[['Entrée',m.starter],['Plat',m.main],['Dessert',m.sweet]].filter(([,v])=>v).map(([k,v])=>'<div class="course"><small>'+k+'</small><h2>'+esc(v)+'</h2></div>').join(''):'<p>Le menu du jour n’a pas encore été annoncé. Retrouvez ici l’entrée, le plat et le dessert dès leur publication.</p>'}</section><figure class="dailyphoto"><img src="${m?.hasPhoto?photoPath(m):'/photos/brandade-editorial.jpg'}" alt="${m?.hasPhoto?'Photo du menu du jour':'Illustration de brandade de morue'}"><figcaption>${m?.hasPhoto?'À la table de la brasserie':'Brandade de morue · Illustration'}</figcaption></figure></div></div><button hidden class="reopen" type="button">↻ Revoir l’ouverture</button><details id="mobile"><summary>Recevoir le menu sur mon téléphone</summary><p id="guide"></p><button id="install" hidden>Installer l’application</button> <button id="push">Activer les notifications</button> <button id="test-push" type="button" hidden>Tester sur cet appareil</button><p id="message" role="status"></p></details><dialog id="installbox" aria-labelledby="install-title">
 <header class="install-header">
 <img src="/icon192.png" alt="" width="48" height="48">
 <h2 id="install-title">Installer la Brasserie</h2>
@@ -68,14 +70,17 @@ try{const payload=await encryptPush(sub,{id,title,body});const response=await se
 }}
 return json({accepted,missed,next:list.length===20?list[list.length-1].idx:null})
 }
-async function deliver(env,menu){
+async function deliver(env,menu,cursor=0,batchSize=20){
+const keyId=menu.notificationKey;
 const {total,alreadySent}=await env.DB.prepare(
   'SELECT count(*) AS total,count(d.endpoint) AS alreadySent FROM subs s LEFT JOIN deliveries d ON d.endpoint=s.endpoint AND d.day=?'
-).bind(menu.day).first();
-const pending=(await env.DB.prepare(
-  'SELECT s.endpoint,s.p256dh,s.auth FROM subs s WHERE NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.day=? AND d.endpoint=s.endpoint) ORDER BY s.rowid LIMIT 40'
-).bind(menu.day).all()).results;
-const result={total,alreadySent,accepted:0,expired:0,failed:0,remaining:Math.max(0,total-alreadySent-pending.length)};
+).bind(keyId).first();
+const candidates=(await env.DB.prepare(
+  'SELECT s.rowid AS idx,s.endpoint,s.p256dh,s.auth FROM subs s WHERE s.rowid>? AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.day=? AND d.endpoint=s.endpoint) ORDER BY s.rowid LIMIT ?'
+).bind(cursor,keyId,batchSize+1).all()).results;
+const pending=candidates.slice(0,batchSize);
+const next=candidates.length>batchSize?pending.at(-1).idx:null;
+const result={total,alreadySent,accepted:0,expired:0,failed:0,next};
 if(!pending.length)return result;
 let key;
 try{
@@ -85,10 +90,13 @@ try{
   console.error('Menu push signing key is unavailable');
   return result;
 }
-const note={id:'menu-du-jour-'+menu.day,title:'Brasserie de l’Herbasse · Menu du jour',
+const note={id:keyId,tag:'menu-du-jour-'+menu.day,title:'Brasserie de l’Herbasse · Menu du jour',
   body:[menu.main+' · '+menu.price+' €',menu.starter,menu.sweet].filter(Boolean).join('\n')};
+if(menu.hasPhoto)note.image=photoPath(menu);
 for(const sub of pending){
-  const claim=await env.DB.prepare('INSERT OR IGNORE INTO deliveries VALUES (?,?)').bind(menu.day,sub.endpoint).run();
+  const claim=await env.DB.prepare(
+    "INSERT OR IGNORE INTO deliveries SELECT ?,? FROM menus WHERE day=? AND state='published' AND COALESCE(notification_key,day)=?"
+  ).bind(keyId,sub.endpoint,menu.day,keyId).run();
   if(!claim.meta.changes){result.alreadySent++;continue}
   try{
     const payload=sub.p256dh&&sub.auth?await encryptPush(sub,note):undefined;
@@ -105,7 +113,7 @@ for(const sub of pending){
     result.failed++;
     console.warn('Menu push request failed');
   }
-  await env.DB.prepare('DELETE FROM deliveries WHERE day=? AND endpoint=?').bind(menu.day,sub.endpoint).run();
+  await env.DB.prepare('DELETE FROM deliveries WHERE day=? AND endpoint=?').bind(keyId,sub.endpoint).run();
 }
 return result;
 }
@@ -113,7 +121,7 @@ async function tick(env){
 if(hour()<10)return 0;
 await env.DB.prepare("UPDATE menus SET state='published' WHERE day=? AND state='scheduled'").bind(day()).run();
 const menu=await todayMenu(env);
-return menu?(await deliver(env,menu)).accepted:0;
+return menu?(await deliver(env,menu,0,40)).accepted:0;
 }
 async function testDevice(env,{endpoint,keys}){
 if(!validEndpoint(endpoint)||typeof keys?.p256dh!=='string'||typeof keys?.auth!=='string')return json('Abonnement introuvable sur cet appareil.',400);
@@ -138,14 +146,54 @@ try{
 }
 return json('Le service de notifications a refusé le test. Réessayez dans une minute.',502);
 }
+const publicationIdPattern=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+const menuChanged=()=>json('Le menu a été modifié entre-temps. Rechargez l’administration avant de renvoyer.',409);
+async function saveMenu(env,m){
+  if(!m||!/^\d{4}-\d\d-\d\d$/.test(m.day)||m.day<day()||!['scheduled','published','draft'].includes(m.state)
+    ||[m.starter,m.main,m.sweet].some(value=>typeof value!=='string'||value.length>150)
+    ||!m.main.trim()||!/^\d{1,3}([.,]\d{1,2})?$/.test(m.price)||(m.state==='published'&&m.day!==day())){
+    return json('Vérifiez la date, les plats et le prix. L’envoi immédiat concerne le menu d’aujourd’hui.',400);
+  }
+  if(m.photo!=null&&(typeof m.photo!=='string'||m.photo.length>800000||!/^\/9j\/[A-Za-z0-9+/]+=*$/.test(m.photo))){
+    return json('Photo invalide.',400);
+  }
+
+  const manual=m.state==='published'&&m.publicationId!=null;
+  if(manual&&(!publicationIdPattern.test(m.publicationId)||(m.expectedKey!==null&&typeof m.expectedKey!=='string'))){
+    return json('Publication invalide. Rechargez l’administration.',400);
+  }
+  const publicationKey=manual?'menu-'+m.publicationId:null;
+  await env.DB.prepare(`
+    INSERT INTO menus(day,starter,main,sweet,price,state,photo,notification_key) VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(day) DO UPDATE SET starter=excluded.starter,main=excluded.main,sweet=excluded.sweet,
+      price=excluded.price,state=excluded.state,photo=COALESCE(excluded.photo,menus.photo),
+      notification_key=COALESCE(excluded.notification_key,menus.notification_key)
+    WHERE excluded.notification_key IS NULL OR
+      (COALESCE(menus.notification_key,menus.day) IS ? AND COALESCE(menus.notification_key,menus.day)<>excluded.notification_key)
+  `).bind(m.day,m.starter,m.main,m.sweet,m.price,m.state,m.photo??null,publicationKey,manual?m.expectedKey:null).run();
+  if(m.state!=='published')return json({delivery:null});
+  const menu=await todayMenu(env);
+  if(!menu||(manual&&menu.notificationKey!==publicationKey))return menuChanged();
+  return json({delivery:await deliver(env,menu,0,manual?20:40)});
+}
+async function continueMenuDelivery(env,{publicationId,cursor}){
+  if(!publicationIdPattern.test(publicationId)||!Number.isSafeInteger(cursor)||cursor<1)return json('Envoi invalide.',400);
+  const menu=await todayMenu(env);
+  if(!menu||menu.notificationKey!=='menu-'+publicationId)return menuChanged();
+  return json({delivery:await deliver(env,menu,cursor)});
+}
 export default {async scheduled(_,env){await tick(env)},async fetch(req,env){const u=new URL(req.url),p=u.pathname,method=req.method;const send=(v,type)=>new Response(v,{headers:{'Content-Type':type,'Cache-Control':'no-store'}});try{
 if(p.startsWith('/photos/') && Object.hasOwn(PHOTOS,p.slice(8)))return send(Uint8Array.from(atob(PHOTOS[p.slice(8)]),c=>c.charCodeAt(0)),'image/jpeg');
 if(p==='/icon192.png'||p==='/icon512.png')return send(Uint8Array.from(atob(ICONS[p.slice(1)]),c=>c.charCodeAt(0)),'image/png');
-if(/^\/photo-du-jour\/\d{4}-\d{2}-\d{2}$/.test(p)){const row=await env.DB.prepare("SELECT photo FROM menus WHERE day=? AND state='published'").bind(p.split('/').pop()).first();return row?.photo?send(Uint8Array.from(atob(row.photo),c=>c.charCodeAt(0)),'image/jpeg'):new Response('',{status:404})}
+if(/^\/photo-du-jour\/\d{4}-\d{2}-\d{2}$/.test(p)){
+const version=u.searchParams.get('v');
+const row=await env.DB.prepare("SELECT photo FROM menus WHERE day=? AND state='published' AND (? IS NULL OR COALESCE(notification_key,day)=?)").bind(p.split('/').pop(),version,version).first();
+return row?.photo?send(Uint8Array.from(atob(row.photo),c=>c.charCodeAt(0)),'image/jpeg'):new Response('',{status:404})
+}
 if(p==='/logo.webp')return send(Uint8Array.from(atob(LOGO),c=>c.charCodeAt(0)),'image/webp');
 if(p==='/style.css')return send(CSS,'text/css');if(p==='/client.js'||p==='/sw.js')return send(p==='/sw.js'?SW:CLIENT,'text/javascript');
 if(p==='/manifest.json')return json({name,short_name:'Herbasse',id:'/',start_url:'/',display:'standalone',theme_color:'#151515',icons:[192,512].map(n=>({src:'/icon'+n+'.png',sizes:n+'x'+n,type:'image/png'}))});
-if(p==='/api/menu')return json(await todayMenu(env));if(p==='/api/key')return json(env.VAPID_PUBLIC);
+if(p==='/api/menu'){const menu=await todayMenu(env);return json(menu?{...menu,photoPath:menu.hasPhoto?photoPath(menu):null}:null)}if(p==='/api/key')return json(env.VAPID_PUBLIC);
 if(method==='POST'&&req.headers.get('origin')!==u.origin&&p!=='/api/tick')return json('Origine refusée',403);
 if(method==='POST'&&p==='/api/tick')return json(await tick(env));
 const token=env.ADMIN_SECRET?await session(env,day()):null;const admin=!!token&&(req.headers.get('cookie')||'').split(';').some(v=>v.trim()==='brasserie='+token);
@@ -154,5 +202,10 @@ if(method==='POST'&&p==='/api/logout')return new Response('{}',{headers:{'Set-Co
 if(method==='POST'&&p==='/api/test-push')return await testDevice(env,await req.json());
 if(method==='POST'&&p==='/api/sub'){let {endpoint,remove,keys}=await req.json();if(!validEndpoint(endpoint))return json('Service de notification non pris en charge.',400);if(remove)await env.DB.prepare('DELETE FROM subs WHERE endpoint=?').bind(endpoint).run();else if(keys&&/^[A-Za-z0-9_-]{87}$/.test(keys.p256dh)&&/^[A-Za-z0-9_-]{22}$/.test(keys.auth))await env.DB.prepare('INSERT INTO subs(endpoint,p256dh,auth) VALUES (?,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth').bind(endpoint,keys.p256dh,keys.auth).run();else await env.DB.prepare('INSERT OR IGNORE INTO subs(endpoint) VALUES (?)').bind(endpoint).run();return json(true)}
 if(p==='/api/announce'&&method==='POST'){if(!admin)return json('Connexion requise',403);return broadcast(env,await req.json())}
-if(p==='/api/admin'){if(!admin)return json('Connexion requise',403);if(method==='GET')return json((await env.DB.prepare('SELECT day,starter,main,sweet,price,state FROM menus ORDER BY day DESC LIMIT 120').all()).results);const m=await req.json();if(!/^\d{4}-\d\d-\d\d$/.test(m.day)||m.day<day()||!['scheduled','published','draft'].includes(m.state)||!m.main?.trim()||!/^\d{1,3}([.,]\d{1,2})?$/.test(m.price)||[m.starter,m.main,m.sweet].some(x=>typeof x!=='string'||x.length>150)||(m.state==='published'&&m.day!==day()))return json('Vérifiez la date, les plats et le prix. L’envoi immédiat concerne le menu d’aujourd’hui.',400);if(m.photo!=null&&(typeof m.photo!=='string'||m.photo.length>800000||!/^\/9j\/[A-Za-z0-9+/]+=*$/.test(m.photo)))return json('Photo invalide.',400);await env.DB.prepare('INSERT INTO menus(day,starter,main,sweet,price,state,photo) VALUES (?,?,?,?,?,?,?) ON CONFLICT(day) DO UPDATE SET starter=excluded.starter,main=excluded.main,sweet=excluded.sweet,price=excluded.price,state=excluded.state,photo=coalesce(excluded.photo,menus.photo)').bind(m.day,m.starter,m.main,m.sweet,m.price,m.state,m.photo??null).run();return json({delivery:m.state==='published'?await deliver(env,m):null})}
+if(p==='/api/admin'||p==='/api/menu-delivery'){
+  if(!admin)return json('Connexion requise',403);
+  if(p==='/api/admin'&&method==='GET')return json((await env.DB.prepare('SELECT '+menuFields+' FROM menus ORDER BY day DESC LIMIT 120').all()).results);
+  if(method!=='POST')return json('Méthode non autorisée.',405);
+  return p==='/api/admin'?await saveMenu(env,await req.json()):await continueMenuDelivery(env,await req.json());
+}
 if(p in pages||p==='/alertes')return send(await page(p,env,admin),'text/html;charset=UTF-8');return new Response('Page introuvable',{status:404})}catch{return json('Service temporairement indisponible.',503)}}}

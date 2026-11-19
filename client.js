@@ -2,30 +2,87 @@ const $=s=>document.querySelector(s),msg=t=>$('#message').textContent=t;
 async function api(url,data){const r=await fetch('/api/'+url,data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{});const v=await r.json();if(!r.ok)throw Error(v);return v}
 if($('#login'))$('#login').onsubmit=async e=>{e.preventDefault();try{await api('login',{password:e.target.password.value});location.reload()}catch(x){msg(x.message)}};
 if($('#logout'))$('#logout').onclick=async()=>{await api('logout',{});location.reload()};
-async function historyList(){const h=$('#history'),f=$('#menuform');h.replaceChildren();for(const m of await api('admin')){const b=document.createElement('button');b.textContent=m.day+' · '+({draft:'Brouillon',published:'Publié',scheduled:'Programmé'}[m.state]);b.onclick=()=>{if($('#photo')){$('#photo').value='';$('#preview').hidden=true}for(const [k,v] of Object.entries(m))if(f.elements[k])f.elements[k].value=v;f.scrollIntoView()};h.append(b,' ')}}
 function publicationStatus(delivery){
  if(!delivery)return 'Menu enregistré.';
  if(!delivery.total)return 'Menu publié. Aucun appareil n’est abonné aux notifications.';
  const details=[];
  if(delivery.accepted)details.push(delivery.accepted===1?'1 notification acceptée':delivery.accepted+' notifications acceptées');
- if(delivery.alreadySent)details.push(delivery.alreadySent+' déjà averti(s) aujourd’hui');
+ if(delivery.alreadySent)details.push(delivery.alreadySent+' déjà averti(s) pour cet envoi');
  if(delivery.expired)details.push(delivery.expired+' abonnement(s) expiré(s)');
- if(delivery.failed)details.push(delivery.failed+' échec(s) d’envoi');
- if(delivery.remaining)details.push(delivery.remaining+' envoi(s) en attente');
+ if(delivery.failed)details.push(delivery.failed+' échec(s) d’envoi. Appuyez à nouveau sur le bouton pour réessayer.');
  return 'Menu publié. '+details.join(' · ')+'.';
 }
-if($('#menuform')){
- historyList().catch(x=>msg(x.message));
- $('#menuform').onsubmit=async e=>{
-  e.preventDefault();
-  const button=e.submitter;
-  button.disabled=true;
+
+const menuForm=$('#menuform');
+if(menuForm){
+ const history=$('#history'),editPublished=$('#edit-published'),publish=$('#publish-menu');
+ const today=menuForm.elements.day.value;
+ const photo=$('#photo'),preview=$('#preview');
+ let menus=[],pending,historyLoaded=false;
+
+ function updateActions(){
+  const menu=menus.find(item=>item.day===menuForm.elements.day.value);
+  const editing=menu?.day===today&&menu.state==='published';
+  publish.textContent=editing?'Mettre à jour et renvoyer':'Publier et envoyer maintenant';
+  editPublished.hidden=!menus.some(item=>item.day===today&&item.state==='published');
+ }
+ function selectMenu(menu){
+  pending=null;
+  photo.value='';
+  for(const name of ['day','starter','main','sweet','price'])menuForm.elements[name].value=menu[name]??'';
+  preview.hidden=!menu.hasPhoto||menu.state!=='published';
+  if(!preview.hidden)preview.src='/photo-du-jour/'+menu.day+'?v='+encodeURIComponent(menu.notificationKey);
+  updateActions();
+  menuForm.elements.starter.focus();
+ }
+ async function refreshHistory(){
+  menus=await api('admin');
+  historyLoaded=true;
+  history.replaceChildren();
+  for(const menu of menus){
+   const entry=document.createElement('button');
+   entry.type='button';
+   entry.textContent=menu.day+' · '+({draft:'Brouillon',published:'Publié',scheduled:'Programmé'}[menu.state]);
+   entry.onclick=()=>selectMenu(menu);
+   history.append(entry,' ');
+  }
+  updateActions();
+ }
+ const initialMenus=refreshHistory().catch(error=>msg(error.message));
+ editPublished.onclick=()=>selectMenu(menus.find(menu=>menu.day===today&&menu.state==='published'));
+ menuForm.addEventListener('input',()=>{pending=null});
+ menuForm.elements.day.addEventListener('change',()=>{
+  updateActions();
+  if(!photo.files.length)preview.hidden=true;
+ });
+ menuForm.onsubmit=async event=>{
+  event.preventDefault();
+  const state=event.submitter.value;
+  const actions=[...menuForm.querySelectorAll('button')];
+  actions.forEach(button=>{button.disabled=true});
   try{
-   const {delivery}=await api('admin',{...Object.fromEntries(new FormData(e.target)),state:button.value,photo:await preparePhoto()});
+   await initialMenus;
+   if(!historyLoaded)await refreshHistory();
+   if(!pending||pending.state!==state){
+    const values=Object.fromEntries(new FormData(menuForm));
+    const previous=menus.find(menu=>menu.day===values.day);
+    pending={...values,state,photo:await preparePhoto()};
+    if(state==='published')Object.assign(pending,{publicationId:crypto.randomUUID(),expectedKey:previous?.notificationKey??null});
+   }
+   const submission=pending;
+   let {delivery}=await api('admin',submission);
+   if(delivery){
+    while(Number.isSafeInteger(delivery.next)){
+     msg('Menu publié. Envoi des notifications en cours…');
+     const {delivery:batch}=await api('menu-delivery',{publicationId:submission.publicationId,cursor:delivery.next});
+     delivery={...delivery,next:batch.next,accepted:delivery.accepted+batch.accepted,expired:delivery.expired+batch.expired,failed:delivery.failed+batch.failed};
+    }
+   }
+   if(!delivery?.failed&&pending===submission)pending=null;
    msg(publicationStatus(delivery));
-   await historyList();
-  }catch(x){msg(x.message)}
-  finally{button.disabled=false}
+   await refreshHistory();
+  }catch(error){msg(error.message)}
+  finally{actions.forEach(button=>{button.disabled=false})}
  };
 }
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
